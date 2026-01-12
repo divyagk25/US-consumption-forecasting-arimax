@@ -1,0 +1,513 @@
+---
+title: "MTH783P Final Project:"
+author: "Kothari Divya, 
+Student ID:240485889,
+ah24177@qmul.ac.uk"
+date: "Last compiled on:   `r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document: default
+  pandoc_args: "--variable=linestretch:0.8"
+  html_document:
+    df_print: paged
+  word_document: default
+abstract: "This project forecasts and compares the last 7 quarters of U.S. consumption changes using economic indicators. The methods used were ARIMA, ARIMAX and Linear regression.The best-performing model was a manually tuned ARIMAX(3,2,1)(1,0,1)[4], using Income, Savings, and Unemployment as predictors (AIC = 141.6)"
+fontsize: 12pt
+geometry: margin=0.2in
+header-includes: 
+   \setlength{\parskip}{0pt}
+   \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc} 
+  \usepackage{lmodern}
+  \usepackage{lipsum}
+  \usepackage{fancyhdr}
+  \pagestyle{fancy}
+  \renewcommand{\headrulewidth}{0pt}
+  \fancyhf{}
+  \fancyfoot[C]{\twopagenumbers}
+  \fancypagestyle{plain}{
+    \renewcommand{\headrulewidth}{0pt}
+    \fancyhf{}
+    \fancyfoot[C]{\twopagenumbers}
+  }
+  \usepackage[user]{zref}
+  \newcounter{pageaux}
+  \def\currentauxref{PAGEAUX1}
+  \newcommand{\twopagenumbers}{
+    \stepcounter{pageaux}
+    \thepageaux\, of\, \ref{\currentauxref}
+  }
+  \makeatletter
+  \newcommand{\resetpageaux}{
+    \clearpage
+    \edef\@currentlabel{\thepageaux}\label{\currentauxref}
+    \xdef\currentauxref{PAGEAUX\thepage}
+    \setcounter{pageaux}{0}}
+  \AtEndDvi{\edef\@currentlabel{\thepageaux}\label{\currentauxref}}
+  \makeatletter
+---
+
+<!--
+#########################################################
+###         DO NOT CHANGE the following code          ###
+#########################################################
+-->
+
+```{r setup, include=FALSE,echo=FALSE,fig.width=1, fig.height=2,message=FALSE, warning=FALSE }
+knitr::opts_chunk$set(echo = TRUE, fig.align = 'center', out.width = "90%")
+if (!require("fpp2"))install.packages("fpp2")
+if (!require("ggplot2"))install.packages("ggplot2")
+if (!require("forecast"))install.packages("forecast")
+if (!require("corrplot"))install.packages("corrplot")
+if (!require("tidyverse"))install.packages("tidyverse")
+if (!require("tseries"))install.packages("tseries")
+if (!require("tseries"))install.packages("gridExtra") 
+library(fpp2)
+library(ggplot2)
+library(forecast)
+library(corrplot)
+library(tidyverse)
+library(tseries)
+library(corrplot)
+library(gridExtra)
+library(dplyr)
+library(knitr)
+
+```
+
+\thispagestyle{empty}
+\newpage
+\setcounter{page}{1}
+<!--
+#########################################################
+###      Start writing your report from line 61       ###
+#########################################################
+-->
+
+This report analyzes quarterly percentage changes in U.S. economic indicators from 1970 Q1 to 2014 Q4 to forecast consumption changes for the last 7 quarters (2015 Q1–2016 Q3).The dataset from the fpp2 package includes five key variables: Consumption, Income, Production, Savings, and Unemployment.
+
+### Q1: Split the data :
+
+The uschange data was split into a training set from 1970 Q1 up to and including 2014 Q4 and a test set from 2015 Q1 to 2016 Q3 using the window function.
+
+### Q2: Exploring the dataset:
+
+Variables include: Consumption, Income, Production, Savings, Unemployment. All variables represent percentage changes from the previous quarter, indicating already differenced data. There are 0 missing values.
+
+### Summary statistics of the training set:
+
+```{r ,echo=FALSE,fig.width=1, fig.height=2,message=FALSE, warning=FALSE }
+
+# Training set (1970 Q1 - 2014 Q4)
+train <- window(uschange, end=c(2014, 4))
+# Test set (2015 Q1 onwards)
+test <- window(uschange, start=c(2015, 1))
+#  summary statistics (Min, Median, Mean, Max)
+summary_short <- data.frame(
+  Min = apply(train, 2, min),
+  Median = apply(train, 2, median),
+  Mean = apply(train, 2, mean),
+  Max = apply(train, 2, max)
+)
+# Create a  table
+knitr::kable(summary_short, digits = 2)
+
+```
+
+Observations : Consumption and Income have similar means and medians, indicating symmetry. Production is moderately variable, showing some fluctuations, but no significant trends. Unemployment shows minimal variation around 0, indicating stability. It also behaves in the opposite direction compared to the other variables. Savings exhibits high volatility, especially after 2000, with large fluctuations and outliers.
+
+### Visualize the data to understand the volatility and trends
+
+```{r , fig.width=7, fig.height=3,echo=FALSE}
+autoplot(train , facets = TRUE) +
+  ggtitle("Quarterly Percentage Changes in U.S (train data: 1970 Q1 - 2014 Q4)") +
+  xlab("Year") + 
+  ylab("Percentage Change") +
+  theme(
+    plot.title = element_text(size = 6),  
+    axis.title = element_text(size = 4),   
+    axis.text = element_text(size = 4)     
+  )
+
+
+```
+
+Key observations from the plot:No clear trend or seasonality, suggesting stationarity. Consumption, Income, and Production are centered around 0 with periods of volatility during certain years(1975, 1980, 2008,etc). Savings show a lot of volatility, especially after 2000, with large fluctuations. Unemployment has narrow fluctuations with some spikes during recessions. Consumption, income and production respond similar to each other and hint at correlation between them.
+
+````{=tex}
+\begin{figure}[ht]
+\centering
+\begin{minipage}[t]{0.48\textwidth}
+
+```{r echo=FALSE, fig.width=4, fig.height=3, out.width="100%"}
+library(forecast)
+library(ggplot2)
+#ACF plot
+ggAcf(train[, "Consumption"], lag.max = 50) +
+  ggtitle("ACF for Consumption") +
+  theme_minimal(base_size = 12)
+```
+
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{0.48\textwidth}
+\raggedright
+\textbf{Key observation from ACF plot:} \
+Consumption shows some autocorrelation (especially up to lag 3), suggesting mild non-stationarity.
+
+
+
+Further, the Augmented Dickey-Fuller (ADF) test was applied to check for stationarity. All variables are stationary, as the p-value is less than 0.01. This confirms that despite the ACF suggesting some autocorrelation, the dataset is stationary and does not have a significant trend.
+
+\end{minipage}
+\end{figure}
+````
+
+e} \\end{figure}
+
+```{r,echo=FALSE,warning= FALSE, message= FALSE,fig.width=7, fig.height=3,}
+library(GGally)
+#Pair plot to explore relationship between variables
+ggpairs(as.data.frame(train), title=("Pair plot to explore relationship between variables: ")) +
+  theme(plot.title = element_text(size = 8))
+```
+
+Key insights from the correlation analysis: Consumption is positively correlated with both Production(0.55) and Income(0.39).Consumption has a weak negative correlation with Savings(-0.24).Consumption has a moderate negative correlation with Unemployment(-0.54).Production and Unemployment have a strong negative correlation (-0.799).Savings and Income have a positive correlation (0.714),suggesting that higher income is associated with higher savings.
+
+### Q3: Model selection:
+
+Manual tuning ARIMAX(3,2,1)(1,0,1)[4] seems like the best fit: This manually tuned model combines a regression structure with an ARIMA model excluding the 'Production' variable since its effect(previously tested on auto ARIMAX) was small (coefficient = 0.0326) and statistically weak (p-value = 0.106), while Income had a stronger impact (coefficient = 0.6963, p \< 0.001). Removing it improved model accuracy (AIC dropped from 148.57 to 141.6). The model has Lowest AIC(141.6) and BIC (173.42),Lowest RMSE (0.322) and MAE (0.240) on training data among all models. Most reasonable MAPE (77.9) compared to other models. Includes Income, Savings and Unemployment as predictors, which all show significant relationships with Consumption.Residual Analysis:Residuals are mostly white noise (though with minor autocorrelation at some lags).Ljung-Box p=0.019 shows mild autocorrelation. Residual distribution is approximately normal and seems unbiased.ACF1 value (-0.096) shows minimal autocorrelation.
+
+Metrics:
+
+```{r, echo=FALSE,fig.width=4, fig.height=3, warning= FALSE, message= FALSE}
+manual_regarima <- Arima(
+    train[, "Consumption"],
+    order = c(3, 2, 1), # since lag at 3
+    seasonal = c(1, 0, 1),
+    xreg = train[, c("Income", "Savings", "Unemployment")]
+  )
+
+ljung <- Box.test(residuals(manual_regarima), type="Ljung-Box")$p.value
+cat(sprintf("AIC=%.1f | BIC=%.1f | RMSE=%.3f | Res.SD=%.3f | Ljung-Box(p)=%.3f", 
+            manual_regarima$aic, 
+            manual_regarima$bic,
+            sqrt(manual_regarima$sigma2),
+            sd(residuals(manual_regarima)),
+            ljung))
+
+```
+
+````{=tex}
+\begin{figure}[ht]
+\centering
+\begin{minipage}[t]{0.48\textwidth}
+\raggedright
+\textbf{Model Comparison:}
+
+Tested the dataset on three models:
+
+1. \textbf{Auto ARIMA (3,0,0)(2,0,0)[4]}:  
+No external predictors, higher AIC/BIC (333.74),high MAPE(177.01) and higher forecast errors.
+
+2. \textbf{Auto ARIMA with all Regressors (Model 2.1–2.2)}:  
+Good fit but low p-value (0.0009) rejects the null hypothesis and shows some residual autocorrelation in residuals at lags up to 8
+
+3. \textbf{Simple Linear Regression}:  
+Ignores time structure, shows some residual autocorrelation, and has higher errors than time series models.
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{0.48\textwidth}
+```{r, echo=FALSE, fig.width=4, fig.height=3.5, out.width="100%", warning=FALSE, message=FALSE}
+
+# Combined residual diagnostics plot
+res <- residuals(manual_regarima)
+par(mfrow = c(3, 1), mar = c(4, 4, 2, 1))
+plot(res, main = "Residuals", ylab = "Residuals", type = "l", col = "steelblue")
+acf(res, main = "ACF of Residuals")
+hist(res, main = "Histogram of Residuals", col = "lightblue", xlab = "Residuals")
+par(mfrow = c(1, 1))
+```
+\end{minipage}
+\end{figure}
+````
+
+### Forecast and Comparison for the next 7 quarters:
+
+```{r, echo=FALSE, fig.width=7.5, fig.height=2, out.width="100%", warning=FALSE, message=FALSE}
+c_train <- train[, "Consumption"]
+c_test <- test[, "Consumption"]
+
+# Best model(ARIMA with regressors, manual tuning) forecast
+best_forecast <- forecast(manual_regarima, 
+                          xreg = test[, c("Income", "Savings", "Unemployment")],
+                          h = 7)
+
+
+# Create a dataframe for plotting
+forecast_df <- data.frame(
+  Quarter = time(c_test),
+  Actual = as.numeric(c_test),
+  Forecast = as.numeric(best_forecast$mean),
+  Lower_95 = as.numeric(best_forecast$lower[, "95%"]),
+  Upper_95 = as.numeric(best_forecast$upper[, "95%"])
+)
+# Plot
+ggplot(forecast_df, aes(x = Quarter)) +geom_line(aes(y = Actual, color = "Actual"), linewidth = 1) +geom_line(aes(y = Forecast, color = "Forecast"), linewidth = 1, linetype = "dashed") +geom_ribbon(aes(ymin = Lower_95, ymax = Upper_95), fill = "gray", alpha = 0.3) +labs(title = "Model 2.2: Consumption Forecast vs Actual (Next 7 Quarters)",x = "Quarter",y = "Consumption Change (%)",color = "Legend" ) +scale_color_manual(values = c("Actual" = "black", "Forecast" = "red")) +theme_minimal()
+
+
+# Accuracy metrics
+accuracy(best_forecast, c_test)
+```
+
+```{r, echo=FALSE, fig.width=6, fig.height=2, out.width="100%", warning=FALSE, message=FALSE}
+# Compare forecasted and actual values:
+library(zoo)
+forecast_vals <- round(as.numeric(best_forecast$mean), 3)
+actual_vals <- round(as.numeric(c_test), 3)
+quarters <- as.yearqtr(time(c_test))  # Use readable quarter format
+
+# Combine into a data frame
+comparison_df <- data.frame(
+  Quarter = quarters,
+  Forecast = forecast_vals,
+  Actual = actual_vals,
+  Error = round(forecast_vals - actual_vals, 3)
+)
+
+# View comparison
+
+print(comparison_df)
+
+```
+
+\begin{minipage}[t]{0.48\linewidth}
+\footnotesize
+\textbf{MODEL ASSUMPTIONS \& VALIDATION:} Linearity: Partial plots show Income (linear), Unemployment (inverse). Stationarity: 2nd order differencing, no trends in ACF/PACF. ADF test proved. Residuals analysis:Constant variance, approx normal.
+
+\textbf{LIMITATIONS:} Residual autocorr.(p=0.019), possible overfitting, weak Savings (-0.044), no shock absorption, minimal seasonality.Cannot account for unforeseen events
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.48\linewidth}
+\footnotesize
+\textbf{STRENGTHS:} AIC=141.6, BIC=173.42. ARIMAX combines predictors and time structure. High accuracy (RMSE=0.098, ME=-0.005).Residual Mean Error (ME = -0.005) is near zero, suggesting an unbiased model.
+
+\textbf{IMPROVEMENTS:} Try dynamic regression/VAR, add more variables/lags.
+\end{minipage}
+<!--
+#########################################################
+### DO NOT CHANGE the code until the section 'R code' ###
+#########################################################
+-->
+\newpage
+\thispagestyle{empty}
+\begin{center}
+\Huge \bf [END of the REPORT]
+\end{center}
+
+\newpage
+
+<!-- \setcounter{pageaux}{0} -->
+
+<!-- \renewcommand{\thepage}{R-\arabic{page}} -->
+
+\resetpageaux
+\renewcommand{\thepageaux}{R-\arabic{pageaux}}
+
+# R code
+
+<!--
+#########################################################
+###              Start typing from here               ###
+#########################################################
+-->
+
+```{r installation}
+if (!require("fpp2"))install.packages("fpp2")
+if (!require("ggplot2"))install.packages("ggplot2")
+if (!require("forecast"))install.packages("forecast")
+if (!require("corrplot"))install.packages("corrplot")
+if (!require("tidyverse"))install.packages("tidyverse")
+if (!require("tseries"))install.packages("tseries")
+if (!require("tseries"))install.packages("gridExtra") 
+library(fpp2)
+library(ggplot2)
+library(forecast)
+library(corrplot)
+library(tidyverse)
+library(tseries)
+library(corrplot)
+library(gridExtra)
+```
+
+```{r Q1}
+# Q1: Split the data into training and test sets
+# Checking where the dataset ends to ensure correct splitting
+end(uschange) 
+
+# Training set (1970 Q1 - 2014 Q4)
+train <- window(uschange, end=c(2014, 4))
+# Test set (2015 Q1 onwards)
+test <- window(uschange, start=c(2015, 1))
+```
+
+```{r Q2}
+# Q2: Exploring the dataset
+# View the first few rows of the training dataset 
+head(train)
+
+# Check for missing values in the training set
+sum(is.null(train))  # No missing values, returns 0
+
+
+# Summary statistics of the training set
+summary(train)
+
+```
+
+```{r}
+# Visualize the data to understand the volatility and trends
+autoplot(train, facets = TRUE) +  
+  ggtitle("Quarterly Percentage Changes in U.S (train data: 1970 Q1 - 2014 Q4)") +
+  xlab("Year") + ylab("Percentage Change")
+
+
+# Scatterplot matrix to explore relationship between variables
+library(GGally)
+ggpairs(as.data.frame(train),title = "Scatterplot Matrix of Economic Indicators") 
+# Plot all variables in the training set
+
+# Calculate correlation between Consumption and other variables
+cor_values <- cor(train[, 1], train[, -1])  
+cor_values  # Display the correlation values
+
+
+# Plot Autocorrelation Function (ACF) to check for trend or seasonality
+par(mfrow = c(2, 3)) 
+for (i in 1:ncol(train)) {
+  Acf(train[, i], lag.max = 50, main = paste("ACF for", colnames(train)[i])) 
+  #  ACF for each variable
+}
+par(mfrow = c(1, 1)) 
+
+
+# Apply Augmented Dickey-Fuller (ADF) test to check for stationarity
+library(tseries)
+for (i in 1:ncol(train)) {
+  print(paste("ADF test for column:", colnames(train)[i]))  
+  adf_test <- adf.test(train[, i]) 
+  print(adf_test) 
+}
+
+
+```
+
+```{r}
+##Q3.
+#Extract Consumption variable from train and test data
+c_train <- train[, "Consumption"]
+c_test <- test[, "Consumption"]
+```
+
+```{r}
+# Model 1: ARIMA Models
+# Model 1.1: ARIMA(3,0,0): since lag at 3
+m1_fit <- Arima(c_train, order = c(3, 0, 0))
+print(summary(m1_fit))
+
+# Model 1.2: Auto ARIMA
+m1_auto <- auto.arima(c_train)
+summary(m1_auto)
+#model shows moderate training set errors but the MAPE(188.53) is unusually high
+
+# Model 2: ARIMA with External Predictors 
+# Model 2.1: Include all variables
+fit_regarima <- auto.arima(c_train,xreg = 
+                             train[, c("Income", "Production", "Savings",
+                                                    "Unemployment")])
+summary(fit_regarima)
+residuals_regarima <- residuals(fit_regarima)
+
+# Plot the ACF of residuals
+acf(residuals_regarima, main = "ACF of Residuals from ARIMAX Model")
+
+
+#Model 2.2: manual tuning ARIMAX
+#the ACF/PACF of auto ARIMAX showed autocorrelation up to lag 3 and seasonality every 4 quarters, and differencing twice may help stabilize the trend.
+manual_regarima<- Arima(c_train,order = c(3, 2, 1),
+                        seasonal = c(1, 0, 1),
+                        xreg = train[, c("Income", "Savings", "Unemployment")])
+summary(manual_regarima)
+
+#Residual Analysis:
+checkresiduals(manual_regarima)
+
+# Model 3:  Linear Models
+# Model 3.1: Multiple regression with all predictors
+fit_lm <- tslm(Consumption ~ Income + Production + 
+                 Savings + Unemployment, data = train)
+summary(fit_lm)
+
+# Calculate AIC and BIC for the linear model
+aic_lm <- AIC(fit_lm)
+bic_lm <- BIC(fit_lm)
+print(paste("AIC: ", aic_lm))
+print(paste("BIC: ", bic_lm))
+```
+
+```{r}
+# Model Selection:
+#Model 2.2 : Manual tuning ARIMAX seems like the best fit
+#Lowest AIC(141.6) and BIC (173.42) among all models.
+#Lowest RMSE (0.322) and MAE (0.240) on training data.
+#Most reasonable MAPE (77.9) compared to other models.
+#Includes Income, Savings and Unemployment as predictors, which all show significant relationships with Consumption.
+#Residual Analysis:Residuals are mostly white noise (though with minor autocorrelation at some lags).Residual distribution is approximately normal.ACF1 value (-0.096) shows minimal autocorrelation
+```
+
+```{r}
+# Forecast the next 7 quarters: 
+# Best model(ARIMA with regressors, manual tuning) forecast
+best_forecast <- forecast(manual_regarima, 
+                          xreg = test[, c("Income", "Savings", "Unemployment")],h = 7)
+#plot for the comparison of actual vs forecast values
+# Create a dataframe for plotting
+forecast_df <- data.frame(
+  Quarter = time(c_test),
+  Actual = as.numeric(c_test),
+  Forecast = as.numeric(best_forecast$mean),
+  Lower_95 = as.numeric(best_forecast$lower[, "95%"]),
+  Upper_95 = as.numeric(best_forecast$upper[, "95%"])
+)
+# Plot
+ggplot(forecast_df, aes(x = Quarter)) +geom_line(aes(y = Actual, color = "Actual"), 
+                              linewidth = 1) +geom_line(aes(y = Forecast, color = "Forecast"), linewidth = 1, linetype = "dashed") +
+  geom_ribbon(aes(ymin = Lower_95, ymax = Upper_95), fill = "gray", alpha = 0.3) +
+  labs(title = "Model 2.3: Consumption Forecast vs Actual (Next 7 Quarters)",
+       x = "Quarter",y = "Consumption Change (%)",color = "Legend" ) +scale_color_manual(values = c("Actual" = "black", "Forecast" = "red")) +
+  theme_minimal()
+
+
+# Accuracy metrics
+accuracy(best_forecast, c_test)
+# selected model shows strong predictive performance, 
+#with low test RMSE (0.098) and MAPE (10%), indicating high accuracy.
+
+
+# Compare forecasted and actual values:
+library(zoo)
+forecast_vals <- round(as.numeric(best_forecast$mean), 3)
+actual_vals <- round(as.numeric(c_test), 3)
+quarters <- as.yearqtr(time(c_test))  # Use readable quarter format
+# Combine into a data frame
+comparison_df <- data.frame(
+  Quarter = quarters,
+  Forecast = forecast_vals,
+  Actual = actual_vals,
+  Error = round(forecast_vals - actual_vals, 3)
+)
+# View comparison
+print(comparison_df)
+#Conclusion: 
+#The comparison shows the forecasted and actual values for each quarter, along with the   error between them. This model forecastes values that are very close to the actual ones, with only small differences in most quarters.
+
+```
